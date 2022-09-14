@@ -12,12 +12,15 @@ from sys import argv, exit
 
 LOGGER = logging.getLogger(argv[0])
 
-GRAFANA_TOKEN = os.getenv('GRAFANA_TOKEN')
-GRAFANA_URL = os.getenv('GRAFANA_URL', 'https://grafana.sts.midocloud.net')
-GRAFANA_USER = os.getenv('GRAFANA_USER', 'admin')
-GRAFANA_PASSWORD = os.getenv('GRAFANA_PASSWORD')
+SOURCE_GRAFANA_TOKEN = os.getenv('SOURCE_GRAFANA_TOKEN')
+SOURCE_GRAFANA_URL = os.getenv('SOURCE_GRAFANA_URL', 'https://grafana.sts.midocloud.net')
+SOURCE_GRAFANA_USER = os.getenv('SOURCE_GRAFANA_USER', 'admin')
+SOURCE_GRAFANA_PASSWORD = os.getenv('SOURCE_GRAFANA_PASSWORD')
 
-AUTH_HEADER = {"Authorization": f"Bearer {GRAFANA_TOKEN}"}
+TARGET_GRAFANA_TOKEN = os.getenv('TARGET_GRAFANA_TOKEN')
+TARGET_GRAFANA_URL = os.getenv('TARGET_GRAFANA_URL', 'https://grafana.sts.midocloud.net')
+TARGET_GRAFANA_USER = os.getenv('TARGET_GRAFANA_USER', 'admin')
+TARGET_GRAFANA_PASSWORD = os.getenv('TARGET_GRAFANA_PASSWORD')
 
 USER = os.getenv('USER')
 
@@ -26,25 +29,25 @@ def sanitize(text: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_-]', '_', text)
 
 
-def ls(session):
+def ls(base_url, session):
     """List all Grafana server's dashboards"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#dashboard-search
-    request = session.get(GRAFANA_URL + '/api/search?query=&')
+    request = session.get(base_url + '/api/search?query=&')
     request.raise_for_status()
     dashboards = request.json()
     return dashboards
 
 
-def get_dashboard(session, uid: str):
+def get_dashboard(base_url, session, uid: str):
     """Download dashboard by uid from Grafana server"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#get-dashboard-by-uid
-    request = session.get(GRAFANA_URL + f'/api/dashboards/uid/{uid}')
+    request = session.get(base_url + f'/api/dashboards/uid/{uid}')
     request.raise_for_status()
     data = request.json()
     return data
 
 
-def set_dashboard(session, data_json, overwrite=False):
+def set_dashboard(base_url, session, data_json, overwrite=False):
     """Create new dashboard in Grafana server"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#create--update-dashboard
     if 'dashboard' not in data_json:
@@ -60,16 +63,17 @@ def set_dashboard(session, data_json, overwrite=False):
     dashboard_json['Message'] = message
     dashboard_json['overwrite'] = overwrite
 
-    request = session.post(GRAFANA_URL + f'/api/dashboards/db', json=dashboard_json)
+    request = session.post(base_url + f'/api/dashboards/db', json=dashboard_json)
     request.raise_for_status()
 
 
-def save(data: str, exist_skip=True):
+def save(data: str, folder=None, exist_skip=True):
     """Save dashboard to a JSON file under a common "dashboard" folder"""
     dashboard = data['dashboard']
-    filename_pattern = f'{dashboard["title"]}_{GRAFANA_URL}_{dashboard["uid"]}'
+    filename_pattern = f'{dashboard["title"]}_{base_url}_{dashboard["uid"]}'
     filename_sanitized = sanitize(filename_pattern) + '.json'
-    folder = 'dashboards'
+    if not folder:
+        folder = 'dashboards'
     os.makedirs(folder, exist_ok=True)
     file_path = folder + os.sep + filename_sanitized
     if exist_skip and os.path.exists(file_path):
@@ -85,15 +89,15 @@ def load(file_name: str):
         return json.load(f)
 
 
-def create_token(session, role='Viewer'):
+def create_token(base_url, session, password, role='Viewer', user='admin'):
     # https only by design
-    url = GRAFANA_URL + '/api/login/ping'
-    basic_auth_session = requests.Session(auth=requests.auth.HTTPBasicAuth(GRAFANA_USER, GRAFANA_PASSWORD))
+    url = base_url + '/api/login/ping'
+    basic_auth_session = requests.Session(auth=requests.auth.HTTPBasicAuth(user, password))
     request = basic_auth_session.get(url)
     request.raise_for_status()
 
-    request = basic_auth_session.get(GRAFANA_URL + '/api/auth/keys',
-        auth=requests.auth.HTTPBasicAuth(GRAFANA_USER, GRAFANA_PASSWORD))
+    request = basic_auth_session.get(base_url + '/api/auth/keys',
+        auth=requests.auth.HTTPBasicAuth(user, password))
     keys = request.json()
     if keys:
         for key in keys:
@@ -105,18 +109,18 @@ def create_token(session, role='Viewer'):
     if USER:
         key_name += '-' + USER
     request = basic_auth_session.post(
-        GRAFANA_URL + '/api/auth/keys',
+        base_url + '/api/auth/keys',
         json={"name": key_name, "secondsToLive": 3600, "role": role},
-        auth=requests.auth.HTTPBasicAuth(GRAFANA_USER, GRAFANA_PASSWORD))
+        auth=requests.auth.HTTPBasicAuth(user, password))
     request.raise_for_status()
     key = request.json()
     LOGGER.warning("Your API key, please save it: %s", key)
     session.headers = {"Authorization": f"Bearer {key['key']}"}
 
 
-def auth_keys(session):
+def auth_keys(base_url, session):
     # permission level needed for seeing auth keys is admin
-    request = session.get(GRAFANA_URL + '/api/auth/keys')
+    request = session.get(base_url + '/api/auth/keys')
     request.raise_for_status()
     print(request.json())
 
@@ -124,27 +128,75 @@ def auth_keys(session):
 def main():
     parser = argparse.ArgumentParser(
         description='Copies dashboards and / or alerts between local storage and Grafana server')
-    parser.add_argument('--source')
-    parser.add_argument('--destination')
-    parser.add_argument('--dashboards', type=bool, default=True)
-    parser.add_argument('--alerts', type=bool, default=False)
+    parser.add_argument('-s', '--source', required=True, help="Copy source: Grafana server HTTPS URL, or path to local folder or file")
+    parser.add_argument('-t', '--target', required=True, help="Copy target: Grafana server HTTPS URL, or path to local folder")
+    parser.add_argument('-f', '--force-overwrite', action='store_true')
+    parser.add_argument('items', help='What should be copied from source to destination?',
+        nargs='+', choices=['dashboards', 'alerts'])
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument('-q', '--quiet', action='store_true')
+    verbosity.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
 
-    session = requests.Session()
-    if any((not GRAFANA_TOKEN, not GRAFANA_USER, not GRAFANA_PASSWORD)):
-        logging.error(
-            'Please either set GRAFANA_USER and GRAFANA_PASSWORD or GRAFANA_TOKEN in your environment')
-        return 1
-    if GRAFANA_TOKEN:
-        session.headers = AUTH_HEADER
-    else:
-        create_token(session)
+    if args.quiet:
+        logging.getLogger().setLevel(logging.WARNING)
+    elif args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
-    for d in ls(session):
-        print(d)
-        save(get_dashboard(session, d['uid']))
+    source_dashboards = []
 
-    auth_keys(session)
+    if args.source and args.source.startswith('http'):
+        source_session = requests.Session()
+        if any((not SOURCE_GRAFANA_TOKEN, not SOURCE_GRAFANA_USER, not SOURCE_GRAFANA_PASSWORD)):
+            logging.error(
+                'Please either set SOURCE_GRAFANA_USER and SOURCE_GRAFANA_PASSWORD or SOURCE_GRAFANA_TOKEN in your environment')
+            return 1
+
+        if SOURCE_GRAFANA_TOKEN:
+            source_session.headers = {"Authorization": f"Bearer {SOURCE_GRAFANA_TOKEN}"}
+        else:
+            create_token(SOURCE_GRAFANA_URL, source_session, user=SOURCE_GRAFANA_USER, password=SOURCE_GRAFANA_PASSWORD)
+
+    if args.target.startswith('http'):
+        target_session = requests.Session()
+        if any((not TARGET_GRAFANA_TOKEN, not TARGET_GRAFANA_USER, not TARGET_GRAFANA_PASSWORD)):
+            logging.error(
+                'Please either set TARGET_GRAFANA_USER and TARGET_GRAFANA_PASSWORD or TARGET_GRAFANA_TOKEN in your environment')
+            return 1
+
+        if TARGET_GRAFANA_TOKEN:
+            target_session.headers = {"Authorization": f"Bearer {TARGET_GRAFANA_TOKEN}"}
+        else:
+            create_token(TARGET_GRAFANA_URL, target_session, user=TARGET_GRAFANA_USER, password=TARGET_GRAFANA_PASSWORD)
+
+    if 'dashboards' in args.items:
+        if args.source.startswith('https://'):
+            for d in ls(SOURCE_GRAFANA_URL, source_session):
+                print(d)
+                source_dashboards.append(get_dashboard(SOURCE_GRAFANA_URL, source_session, d['uid']))
+        else:
+            if not os.path.exists(args.source):
+                raise FileNotFoundError('Source path does not exist: %s', args.source)
+            if os.path.isdir(args.source):
+                for item in os.listdir(args.source):
+                    if os.path.isfile(item):
+                        source_dashboards.append(load(item))
+            elif os.path.isfile(args.source):
+                source_dashboards.append(load(args.source))
+            else:
+                raise ValueError('Source path is not a folder or file: %s', args.source)
+
+        if args.target.startswith('https://'):
+            for d in source_dashboards:
+                set_dashboard(TARGET_GRAFANA_URL, target_session, d, args.force_overwrite)
+        else:
+            if os.path.isfile(args.target):
+                raise FileExistsError('Target folder %s is a file', args.target)
+            for d in source_dashboards:
+                save(d, args.target, exist_skip=not args.force_overwrite)
+
+    if 'items' in args.items:
+        raise NotImplementedError('Not implemented... yet!')
 
 
 if __name__ == '__main__':
