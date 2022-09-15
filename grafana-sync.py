@@ -13,13 +13,11 @@ from sys import argv, exit
 LOGGER = logging.getLogger(argv[0])
 
 SOURCE_GRAFANA_TOKEN = os.getenv('SOURCE_GRAFANA_TOKEN')
-SOURCE_GRAFANA_URL = os.getenv('SOURCE_GRAFANA_URL', 'https://grafana.sts.midocloud.net')
-SOURCE_GRAFANA_USER = os.getenv('SOURCE_GRAFANA_USER', 'admin')
+SOURCE_GRAFANA_USER = os.getenv('SOURCE_GRAFANA_USER')
 SOURCE_GRAFANA_PASSWORD = os.getenv('SOURCE_GRAFANA_PASSWORD')
 
 TARGET_GRAFANA_TOKEN = os.getenv('TARGET_GRAFANA_TOKEN')
-TARGET_GRAFANA_URL = os.getenv('TARGET_GRAFANA_URL', 'https://grafana.sts.midocloud.net')
-TARGET_GRAFANA_USER = os.getenv('TARGET_GRAFANA_USER', 'admin')
+TARGET_GRAFANA_USER = os.getenv('TARGET_GRAFANA_USER')
 TARGET_GRAFANA_PASSWORD = os.getenv('TARGET_GRAFANA_PASSWORD')
 
 USER = os.getenv('USER')
@@ -32,7 +30,7 @@ def sanitize(text: str) -> str:
 def ls(base_url, session):
     """List all Grafana server's dashboards"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#dashboard-search
-    request = session.get(base_url + '/api/search?query=&')
+    request = session.get(base_url + '/api/search?type=dash-db') # type excludes folders
     request.raise_for_status()
     dashboards = request.json()
     return dashboards
@@ -44,6 +42,8 @@ def get_dashboard(base_url, session, uid: str):
     request = session.get(base_url + f'/api/dashboards/uid/{uid}')
     request.raise_for_status()
     data = request.json()
+    for field in data:
+        LOGGER.debug(f'"{field}": "{data[field]}"')
     return data
 
 
@@ -62,7 +62,8 @@ def set_dashboard(base_url, session, data_json, overwrite=False):
         message += f" by {USER}"
     dashboard_json['Message'] = message
     dashboard_json['overwrite'] = overwrite
-
+    for field in dashboard_json:
+        LOGGER.debug(f'"{field}": "{dashboard_json[field]}"')
     request = session.post(base_url + f'/api/dashboards/db', json=dashboard_json)
     request.raise_for_status()
 
@@ -70,7 +71,7 @@ def set_dashboard(base_url, session, data_json, overwrite=False):
 def save(data: str, folder=None, exist_skip=True):
     """Save dashboard to a JSON file under a common "dashboard" folder"""
     dashboard = data['dashboard']
-    filename_pattern = f'{dashboard["title"]}_{base_url}_{dashboard["uid"]}'
+    filename_pattern = f'{dashboard["title"]}_{dashboard["uid"]}'
     filename_sanitized = sanitize(filename_pattern) + '.json'
     if not folder:
         folder = 'dashboards'
@@ -92,7 +93,8 @@ def load(file_name: str):
 def create_token(base_url, session, password, role='Viewer', user='admin'):
     # https only by design
     url = base_url + '/api/login/ping'
-    basic_auth_session = requests.Session(auth=requests.auth.HTTPBasicAuth(user, password))
+    basic_auth_session = requests.Session()
+    basic_auth_session.auth = requests.auth.HTTPBasicAuth(user, password)
     request = basic_auth_session.get(url)
     request.raise_for_status()
 
@@ -147,7 +149,7 @@ def main():
 
     if args.source and args.source.startswith('http'):
         source_session = requests.Session()
-        if any((not SOURCE_GRAFANA_TOKEN, not SOURCE_GRAFANA_USER, not SOURCE_GRAFANA_PASSWORD)):
+        if all((not SOURCE_GRAFANA_TOKEN, not SOURCE_GRAFANA_USER, not SOURCE_GRAFANA_PASSWORD)):
             logging.error(
                 'Please either set SOURCE_GRAFANA_USER and SOURCE_GRAFANA_PASSWORD or SOURCE_GRAFANA_TOKEN in your environment')
             return 1
@@ -155,11 +157,11 @@ def main():
         if SOURCE_GRAFANA_TOKEN:
             source_session.headers = {"Authorization": f"Bearer {SOURCE_GRAFANA_TOKEN}"}
         else:
-            create_token(SOURCE_GRAFANA_URL, source_session, user=SOURCE_GRAFANA_USER, password=SOURCE_GRAFANA_PASSWORD)
+            create_token(args.source, source_session, user=SOURCE_GRAFANA_USER, password=SOURCE_GRAFANA_PASSWORD)
 
-    if args.target.startswith('http'):
+    if args.target and args.target.startswith('http'):
         target_session = requests.Session()
-        if any((not TARGET_GRAFANA_TOKEN, not TARGET_GRAFANA_USER, not TARGET_GRAFANA_PASSWORD)):
+        if all((not TARGET_GRAFANA_TOKEN, not TARGET_GRAFANA_USER, not TARGET_GRAFANA_PASSWORD)):
             logging.error(
                 'Please either set TARGET_GRAFANA_USER and TARGET_GRAFANA_PASSWORD or TARGET_GRAFANA_TOKEN in your environment')
             return 1
@@ -167,13 +169,13 @@ def main():
         if TARGET_GRAFANA_TOKEN:
             target_session.headers = {"Authorization": f"Bearer {TARGET_GRAFANA_TOKEN}"}
         else:
-            create_token(TARGET_GRAFANA_URL, target_session, user=TARGET_GRAFANA_USER, password=TARGET_GRAFANA_PASSWORD)
+            create_token(args.target, target_session, user=TARGET_GRAFANA_USER, password=TARGET_GRAFANA_PASSWORD)
 
     if 'dashboards' in args.items:
+        LOGGER.info('Loading dashboards')
         if args.source.startswith('https://'):
-            for d in ls(SOURCE_GRAFANA_URL, source_session):
-                print(d)
-                source_dashboards.append(get_dashboard(SOURCE_GRAFANA_URL, source_session, d['uid']))
+            for d in ls(args.source, source_session):
+                source_dashboards.append(get_dashboard(args.source, source_session, d['uid']))
         else:
             if not os.path.exists(args.source):
                 raise FileNotFoundError('Source path does not exist: %s', args.source)
@@ -186,9 +188,10 @@ def main():
             else:
                 raise ValueError('Source path is not a folder or file: %s', args.source)
 
+        LOGGER.info('Saving dashboards')
         if args.target.startswith('https://'):
             for d in source_dashboards:
-                set_dashboard(TARGET_GRAFANA_URL, target_session, d, args.force_overwrite)
+                set_dashboard(args.target, target_session, d, args.force_overwrite)
         else:
             if os.path.isfile(args.target):
                 raise FileExistsError('Target folder %s is a file', args.target)
