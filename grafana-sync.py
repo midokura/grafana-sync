@@ -140,6 +140,7 @@ def main():
     verbosity.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
 
+    logging.getLogger().setLevel(logging.INFO)
     if args.quiet:
         logging.getLogger().setLevel(logging.WARNING)
     elif args.verbose:
