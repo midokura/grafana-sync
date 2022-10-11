@@ -68,7 +68,24 @@ def set_dashboard(base_url, session, data_json, overwrite=False):
     request.raise_for_status()
 
 
-def save(data: str, folder=None, exist_skip=True):
+def get_internal_ruler_rules(base_url, session) -> dict:
+    """ Query internal endpoint to export all alert rules """
+    request = session.get(f"{base_url}/api/ruler/grafana/api/v1/rules")
+    request.raise_for_status()
+    return request.json()
+
+
+def get_alert_rule(base_url, session, uid: str) -> dict:
+    """ Query public endpoint to export alert rule. UID is required. """
+    LOGGER.debug(f"Getting alert rule {uid}")
+    if not uid:
+        raise ValueError("UID cannot be empty!")
+    request = session.get(f"{base_url}/api/v1/provisioning/alert-rules/{uid}")
+    request.raise_for_status()
+    return request.json()
+
+
+def save_dashboard(data: str, folder=None, exist_skip=True):
     """Save dashboard to a JSON file under a common "dashboard" folder"""
     dashboard = data['dashboard']
     filename_pattern = f'{dashboard["title"]}_{dashboard["uid"]}'
@@ -82,6 +99,21 @@ def save(data: str, folder=None, exist_skip=True):
         return
     with open(file_path, 'w') as f:
         json.dump(data, f, indent=2)
+
+
+def save_alert(alert: str, folder=None, exist_skip=True):
+    """Save dashboard to a JSON file under a common "dashboard" folder"""
+    filename_pattern = f'{alert["title"]}_{alert["uid"]}'
+    filename_sanitized = f"{sanitize(filename_pattern)}.json"
+    if not folder:
+        folder = 'alerts'
+    os.makedirs(folder, exist_ok=True)
+    file_path = folder + os.sep + filename_sanitized
+    if exist_skip and os.path.exists(file_path):
+        LOGGER.info('skipped existing file %s', file_path)
+        return
+    with open(file_path, 'w') as f:
+        json.dump(alert, f, indent=2)
 
 
 def load(file_name: str):
@@ -126,6 +158,39 @@ def auth_keys(base_url, session):
     request.raise_for_status()
     print(request.json())
 
+
+def process_alerts(args, source_session=None):
+    """ Execution step from cli for alerts """
+
+    alerts_data = list()
+
+    LOGGER.info("Loading alert rules")
+    if args.source.startswith("http"):
+        alerts_list = get_internal_ruler_rules(args.source, source_session)
+        uids = set() # unique list
+
+        # we need JSONPath to make this prettier...
+        for group in alerts_list.keys():
+            for alert in alerts_list[group]:
+                for rule in alert.get("rules", {}):
+                    uids.add(rule["grafana_alert"].get("uid"))
+
+        LOGGER.debug(f"List of {uids=}")
+
+        for uid in uids:
+            alert = get_alert_rule(args.source, source_session, uid)
+            alerts_data.append(alert)
+    else:
+        raise NotImplementedError('Loading alerts from source is not implemented.')
+
+    LOGGER.info("Saving alert rules")
+    if args.target.startswith("http"):
+        raise NotImplementedError('Saving alerts to target is not implemented.')
+    else:
+        if os.path.isfile(args.target):
+            raise FileExistsError('Target folder %s is a file', args.target)
+        for a in alerts_data:
+            save_alert(a, args.target, exist_skip=not args.force_overwrite)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -197,9 +262,12 @@ def main():
             if os.path.isfile(args.target):
                 raise FileExistsError('Target folder %s is a file', args.target)
             for d in source_dashboards:
-                save(d, args.target, exist_skip=not args.force_overwrite)
+                save_dashboard(d, args.target, exist_skip=not args.force_overwrite)
 
-    if 'items' in args.items:
+    elif 'alerts' in args.items:
+        return process_alerts(args, source_session)
+
+    else:
         raise NotImplementedError('Not implemented... yet!')
 
 
