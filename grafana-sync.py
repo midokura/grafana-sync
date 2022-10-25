@@ -187,10 +187,9 @@ def process_alerts(args, source_session=None):
     if args.target.startswith("http"):
         raise NotImplementedError('Saving alerts to target is not implemented.')
     else:
-        if os.path.isfile(args.target):
-            raise FileExistsError('Target folder %s is a file', args.target)
         for a in alerts_data:
             save_alert(a, args.target, exist_skip=not args.force_overwrite)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -259,8 +258,6 @@ def main():
             for d in source_dashboards:
                 set_dashboard(args.target, target_session, d, args.force_overwrite)
         else:
-            if os.path.isfile(args.target):
-                raise FileExistsError('Target folder %s is a file', args.target)
             for d in source_dashboards:
                 save_dashboard(d, args.target, exist_skip=not args.force_overwrite)
 
