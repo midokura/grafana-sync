@@ -28,8 +28,7 @@ $ docker build . --tag grafana-sync
 $ docker run --rm grafana-sync
 ```
 ```
-usage: grafana-sync.py [-h] -s SOURCE -t TARGET [-f] [-q | -v]
-                       {dashboards,alerts} [{dashboards,alerts} ...]
+usage: grafana-sync.py [-h] -s SOURCE -t TARGET [-f] [-q | -v] {dashboards,alerts} [{dashboards,alerts} ...]
 
 Copies dashboards and / or alerts between local storage and Grafana server
 
@@ -39,12 +38,22 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   -s SOURCE, --source SOURCE
-                        Copy source: Grafana server HTTPS URL, or path to
-                        local folder or file
+                        Copy source: Grafana server HTTPS URL, or path to local folder or file
   -t TARGET, --target TARGET
-                        Copy target: Grafana server HTTPS URL, or path to
-                        local folder
+                        Copy target: Grafana server HTTPS URL, or path to local folder
   -f, --force-overwrite
   -q, --quiet
   -v, --verbose
+
+environment variables:
+
+SOURCE_GRAFANA_TOKEN    token for the source Grafana server
+SOURCE_GRAFANA_USER     Username for the source Grafana server (when no token is given)
+SOURCE_GRAFANA_PASSWORD Password for the source Grafana server (when no token is given)
+
+TARGET_GRAFANA_TOKEN    token for the target Grafana server
+TARGET_GRAFANA_USER     Username for the target Grafana server (when no token is given)
+TARGET_GRAFANA_PASSWORD Password for the target Grafana server (when no token is given)
+
+USER                    Username to save dashboard changes under (usually, your Unix username)
 ```

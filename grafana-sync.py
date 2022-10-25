@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 # grafana API reference: https://grafana.com/docs/grafana/latest/developers/http_api/
 
+DOC_EPILOG = '''environment variables:
+
+SOURCE_GRAFANA_TOKEN    token for the source Grafana server
+SOURCE_GRAFANA_USER     Username for the source Grafana server (when no token is given)
+SOURCE_GRAFANA_PASSWORD Password for the source Grafana server (when no token is given)
+
+TARGET_GRAFANA_TOKEN    token for the target Grafana server
+TARGET_GRAFANA_USER     Username for the target Grafana server (when no token is given)
+TARGET_GRAFANA_PASSWORD Password for the target Grafana server (when no token is given)
+
+USER                    Username to save dashboard changes under (usually, your Unix username)
+'''
+
 import argparse
 from datetime import datetime
 import json
@@ -193,7 +206,10 @@ def process_alerts(args, source_session=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Copies dashboards and / or alerts between local storage and Grafana server')
+        description='Copies dashboards and / or alerts between local storage and Grafana server',
+        epilog=DOC_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter # do not remove newlines from DOC_EPILOG
+    )
     parser.add_argument('-s', '--source', required=True, help="Copy source: Grafana server HTTPS URL, or path to local folder or file")
     parser.add_argument('-t', '--target', required=True, help="Copy target: Grafana server HTTPS URL, or path to local folder")
     parser.add_argument('-f', '--force-overwrite', action='store_true')
