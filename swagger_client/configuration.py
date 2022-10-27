@@ -51,10 +51,10 @@ class Configuration(object):
         self.api_key_prefix = {}
         # function to refresh API key if expired
         self.refresh_api_key_hook = None
-        # Username for HTTP basic authentication
-        self.username = ""
-        # Password for HTTP basic authentication
-        self.password = ""
+        # # Username for HTTP basic authentication
+        # self.username = ""
+        # # Password for HTTP basic authentication
+        # self.password = ""
 
         # Logging Settings
         self.logger = {}
@@ -217,14 +217,14 @@ class Configuration(object):
             else:
                 return key
 
-    def get_basic_auth_token(self):
-        """Gets HTTP basic authentication header (string).
+    # def get_basic_auth_token(self):
+    #     """Gets HTTP basic authentication header (string).
 
-        :return: The token for basic HTTP authentication.
-        """
-        return urllib3.util.make_headers(
-            basic_auth=self.username + ':' + self.password
-        ).get('authorization')
+    #     :return: The token for basic HTTP authentication.
+    #     """
+    #     return urllib3.util.make_headers(
+    #         basic_auth=self.username + ':' + self.password
+    #     ).get('authorization')
 
     def auth_settings(self):
         """Gets Auth Settings dict for api client.
@@ -239,13 +239,13 @@ class Configuration(object):
                     'key': 'Authorization',
                     'value': self.get_api_key_with_prefix('Authorization')
                 },
-            'basic':
-                {
-                    'type': 'basic',
-                    'in': 'header',
-                    'key': 'Authorization',
-                    'value': self.get_basic_auth_token()
-                },
+            # 'basic':
+            #     {
+            #         'type': 'basic',
+            #         'in': 'header',
+            #         'key': 'Authorization',
+            #         'value': self.get_basic_auth_token()
+            #     },
 
         }
 
