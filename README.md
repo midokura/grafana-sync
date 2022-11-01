@@ -1,6 +1,10 @@
 # grafana-sync
 Python tool to sync Grafana dashboards
 
+## Running
+
+### in Docker
+
 
 ```sh
 $ docker build . --tag grafana-sync
@@ -27,6 +31,9 @@ $ docker build . --tag grafana-sync
 ```sh
 $ docker run --rm grafana-sync
 ```
+
+### Usage
+
 ```
 usage: grafana-sync.py [-h] -s SOURCE -t TARGET [-f] [-q | -v] {dashboards,alerts} [{dashboards,alerts} ...]
 
@@ -57,3 +64,11 @@ TARGET_GRAFANA_PASSWORD Password for the target Grafana server (when no token is
 
 USER                    Username to save dashboard changes under (usually, your Unix username)
 ```
+
+## Testing
+
+spawn a Grafana instance: https://hub.docker.com/r/grafana/grafana/
+```
+docker run -d --name=grafana -p 3000:3000 grafana/grafana
+```
+> Try it out, default admin user credentials are admin/admin.
