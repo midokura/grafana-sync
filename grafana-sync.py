@@ -318,14 +318,14 @@ def main():
 
     if 'dashboards' in args.items:
         LOGGER.info('Loading dashboards')
-        if args.source.startswith('https://'):
+        if args.source.startswith('http'):
             for d in ls_dashboards(args.source, source_session):
                 source_dashboards.append(get_dashboard(args.source, source_session, d['uid']))
         else:
             source_dashboards = load_from_path(args.source)
 
         LOGGER.info('Saving dashboards')
-        if args.target.startswith('https://'):
+        if args.target.startswith('https'):
             for d in source_dashboards:
                 set_dashboard(args.target, target_session, d, args.force_overwrite)
         else:
