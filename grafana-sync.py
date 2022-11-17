@@ -50,27 +50,30 @@ TARGET_GRAFANA_PASSWORD = os.getenv('TARGET_GRAFANA_PASSWORD')
 USER = os.getenv('USER')
 
 def sanitize(text: str) -> str:
-    """Replace any not-ascii, dash or underscore character with the underscore character"""
+    """Replace any not-{alphanumerical, dash or underscore} character with the
+    underscore character"""
     return re.sub(r'[^a-zA-Z0-9_-]', '_', text)
+
+
+def simple_get(base_url, session, api_path):
+    """helper to send a GET request and return the parsed JSON response"""
+    request = session.get(base_url + '/api/' + api_path)
+    request.raise_for_status()
+    data = request.json()
+    LOGGER.debug('%s:\n%s', api_path, pretty_json(data))
+    return data
 
 
 def ls_dashboards(base_url, session):
     """List all Grafana server's dashboards"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#dashboard-search
-    request = session.get(base_url + '/api/search?type=dash-db') # type excludes folders
-    request.raise_for_status()
-    dashboards = request.json()
-    return dashboards
+    return simple_get(base_url, session, 'search?type=dash-db') # type excludes folders
 
 
 def get_dashboard(base_url, session, uid: str):
     """Download dashboard by uid from Grafana server"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#get-dashboard-by-uid
-    request = session.get(base_url + f'/api/dashboards/uid/{uid}')
-    request.raise_for_status()
-    data = request.json()
-    LOGGER.debug('get_dashboard:\n%s', pretty_json(data))
-    return data
+    return simple_get(f'/dashboards/uid/{uid}')
 
 
 def set_dashboard(base_url, session, data_json, overwrite=False, adapt_uid=False):
@@ -101,6 +104,66 @@ def set_dashboard(base_url, session, data_json, overwrite=False, adapt_uid=False
     request = session.post(base_url + '/api/dashboards/db', json=dashboard_json)
     request.raise_for_status()
 
+################################################################################
+
+def list_folders(base_url, session):
+    """List folders of Grafana server
+    https://grafana.com/docs/grafana/v9.1/developers/http_api/folder/#get-all-folders
+    """
+    return simple_get(base_url, session, 'folders')
+
+
+def get_folder(base_url, session, uid):
+    """
+    https://grafana.com/docs/grafana/v9.1/developers/http_api/folder/#get-folder-by-uid
+    """
+    return simple_get(base_url, session, f'folders/{uid}')
+
+
+def update_folder(base_url, session, folder: dict):
+    """
+    https://grafana.com/docs/grafana/v9.1/developers/http_api/folder/#update-folder
+    """
+    allowed_fields = {'uid', 'title'}
+    new_folder = {k: folder[k] for k in folder if k in allowed_fields}
+    new_folder['overwrite'] = True
+    request = session.put(base_url + '/api/folders/' + folder['uid'], json=folder)
+    request.raise_for_status()
+    data = request.json()
+    LOGGER.debug('set_folder:\n%s', pretty_json(data))
+    return data
+
+
+def set_folder(base_url, session, folder: dict):
+    """
+    https://grafana.com/docs/grafana/v9.1/developers/http_api/folder/#create-folder
+    """
+    LOGGER.debug(f'{folder=}')
+    allowed_fields = {'uid', 'title'}
+    new_folder = {k: folder[k] for k in folder if k in allowed_fields}
+    request = session.post(base_url + '/api/folders', json=new_folder)
+    request.raise_for_status()
+    data = request.json()
+    LOGGER.debug('set_folder:\n%s', pretty_json(data))
+    return data
+
+
+def get_folder_of_alert(alert: dict) -> str:
+    """returns UID of folder that the 'alert' belongs to"""
+    return alert['folderUID']
+
+
+def get_folder_of_dashboard(dashboard: dict) -> str:
+    """returns UID of dashboard that the 'alert' belongs to"""
+    return dashboard['meta']['folderUid']
+
+
+def save_folder(f: dict, path, exist_skip=True):
+    filename_pattern = f'{f["title"]}_{f["uid"]}'
+    filename_sanitized = f"{sanitize(filename_pattern)}.json"
+    return save_json(f, filename_sanitized, os.path.join(path, 'folders'), exist_skip)
+
+################################################################################
 
 def is_alert(data_json):
     """basic sanity check of a few required fields"""
@@ -128,32 +191,24 @@ def set_alert(base_url, session, data_json, overwrite=False, adapt_uid=False) ->
         del data_json['annotations']
     # TODO: adapt datasource uids
     request = session.post(base_url + '/api/v1/provisioning/alert-rules', json=data_json)
-    request.raise_for_status()
     new_alert = request.json()
     LOGGER.debug('set_alert:\n%s', pretty_json(new_alert))
+    request.raise_for_status()
     return new_alert     
     
 
 def ls_legacy_alerts(base_url, session) -> dict:
     """Deprecated endpoint"""
-    request = session.get(f"{base_url}/api/alerts")
-    request.raise_for_status()
-    return request.json()
+    return simple_get(base_url, session, 'alerts')
 
 
 def get_rule_provisioning_templates(base_url, session) -> dict:
-    request = session.get(f"{base_url}/api/v1/provisioning/templates")
-    data = request.json()
-    LOGGER.debug('get_rule_provisioning_templates:\n%s', pretty_json(data))
-    return data 
+    return simple_get(base_url, session, 'v1/provisioning/templates')
+
 
 def get_internal_ruler_rules(base_url, session) -> dict:
     """Query internal endpoint to export all alert rules """
-    request = session.get(f"{base_url}/api/ruler/grafana/api/v1/rules")
-    request.raise_for_status()
-    data = request.json()
-    LOGGER.debug('get_internal_ruler_rules:\n%s', pretty_json(data))
-    return data 
+    return simple_get(base_url, session, 'ruler/grafana/api/v1/rules')
 
 
 def ls_alerts(base_url, session) -> set:
@@ -186,10 +241,10 @@ def get_alert_rule(base_url, session, uid: str, check_status=True) -> dict:
     return data
 
 
-def save_json(json_text: str, filename, folder, exist_skip=True):
-    """Save JSON file under a common folder"""
-    os.makedirs(folder, exist_ok=True)
-    file_path = folder + os.sep + filename
+def save_json(json_text: str, filename, path, exist_skip=True):
+    """Save JSON file under a common path"""
+    os.makedirs(path, exist_ok=True)
+    file_path = path + os.sep + filename
     if exist_skip and os.path.exists(file_path):
         LOGGER.info('Skipped existing file %s', file_path)
         return
@@ -197,17 +252,17 @@ def save_json(json_text: str, filename, folder, exist_skip=True):
         json.dump(json_text, f, indent=2)
 
 
-def save_alert(alert: str, folder=None, exist_skip=True):
-    filename_pattern = f'{alert["title"]}_{alert["uid"]}'
+def save_alert(a: dict, path, exist_skip=True):
+    filename_pattern = f'{a["title"]}_{a["uid"]}'
     filename_sanitized = f"{sanitize(filename_pattern)}.json"
-    return save_json(alert, filename_sanitized, folder or 'alerts', exist_skip)
+    return save_json(a, filename_sanitized, path, exist_skip)
 
 
-def save_dashboard(data: str, folder=None, exist_skip=True):
-    dashboard = data['dashboard']
+def save_dashboard(d: dict, path, exist_skip=True):
+    dashboard = d['dashboard']
     filename_pattern = f'{dashboard["title"]}_{dashboard["uid"]}'
     filename_sanitized = f"{sanitize(filename_pattern)}.json"
-    return save_json(dashboard, filename_sanitized, folder or 'dashboards', exist_skip)
+    return save_json(dashboard, filename_sanitized, path, exist_skip)
 
 
 def load_from_path(path: str) -> List[str]:
@@ -216,30 +271,40 @@ def load_from_path(path: str) -> List[str]:
         raise FileNotFoundError('Source path does not exist: %s', path)
     if os.path.isdir(path):
         for item in os.listdir(path):
-            if os.path.isfile(item):
-                loaded.append(load(item))
+            full_path = os.path.join(path, item)
+            if os.path.isfile(full_path):
+                loaded.append(load(full_path))
+            else:
+                LOGGER.debug('Ignored path %s', full_path)
     elif os.path.isfile(path):
         loaded.append(load(path))
     else:
         raise ValueError('Source path is not a folder or file: %s', path)
+    LOGGER.info("Loaded %d alerts from %s", len(loaded), path)
     return loaded
 
 
 def load(file_name: str):
     """Load dashboard JSON from file_name"""
+    LOGGER.debug('Opening %s', file_name)
     with open(file_name, 'r') as f:
         return json.load(f)
 
 
-def create_token(base_url, session, password, role='Viewer', user='admin'):
-    # https only by design
-    url = base_url + '/api/login/ping'
-    basic_auth_session = requests.Session()
-    basic_auth_session.auth = requests.auth.HTTPBasicAuth(user, password)
-    request = basic_auth_session.get(url)
+def create_token(base_url: str, session, password, role='Admin', user='admin'):
+    """Use http basic auth to create a token for further API usage"""
+    if base_url.startswith('http://'):
+        if not base_url.startswith('http://192.168.'):
+            LOGGER.fatal('Refusing to use basic auth on WAN over HTTP to avoid leaking credentials')
+            sys.exit(1)
+        else:
+            LOGGER.warning('Using insecure HTTP basic auth over http to %s', base_url)
+
+    session.auth = requests.auth.HTTPBasicAuth(user, password)
+    request = session.get(base_url + '/api/login/ping')
     request.raise_for_status()
 
-    request = basic_auth_session.get(base_url + '/api/auth/keys',
+    request = session.get(base_url + '/api/auth/keys',
         auth=requests.auth.HTTPBasicAuth(user, password))
     keys = request.json()
     if keys:
@@ -248,10 +313,10 @@ def create_token(base_url, session, password, role='Viewer', user='admin'):
             and datetime.strptime(key.get('expiration'), '%Y-%m-%dT%H:%M:%SZ') > datetime.utcnow():
                 LOGGER.warning('There is already an active API key for this role and server.'
                     ' Please try to avoid having many active keys: %s', key)
-    key_name = f"{sys.argv[0]}"
+    key_name = f"{sys.argv[0]}-{role}"
     if USER:
         key_name += '-' + USER
-    request = basic_auth_session.post(
+    request = session.post(
         base_url + '/api/auth/keys',
         json={"name": key_name, "secondsToLive": 3600, "role": role},
         auth=requests.auth.HTTPBasicAuth(user, password))
@@ -259,6 +324,7 @@ def create_token(base_url, session, password, role='Viewer', user='admin'):
     key = request.json()
     LOGGER.warning("Your API key, please save it: %s", key)
     session.headers = {"Authorization": f"Bearer {key['key']}"}
+    session.auth = None # stop using HTTP basic auth
 
 
 def auth_keys(base_url, session):
@@ -277,7 +343,7 @@ def main():
     parser.add_argument('-s', '--source', required=True, help="Copy source: Grafana server HTTPS URL, or path to local folder or file")
     parser.add_argument('-t', '--target', required=True, help="Copy target: Grafana server HTTPS URL, or path to local folder")
     parser.add_argument('-f', '--force-overwrite', action='store_true')
-    parser.add_argument('items', help='What should be copied from source to destination?',
+    parser.add_argument('items', help='What items should be copied from source to destination?',
         nargs='+', choices=['dashboards', 'alerts'])
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument('-q', '--quiet', action='store_true')
@@ -289,8 +355,6 @@ def main():
         logging.getLogger().setLevel(logging.WARNING)
     elif args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-
-    source_dashboards = []
 
     if args.source and args.source.startswith('http'):
         source_session = requests.Session()
@@ -318,45 +382,76 @@ def main():
 
     if 'dashboards' in args.items:
         LOGGER.info('Loading dashboards')
+        source_dashboards = list()
+        dashboard_folders = dict() # indexed by uid
+
         if args.source.startswith('http'):
             for d in ls_dashboards(args.source, source_session):
-                source_dashboards.append(get_dashboard(args.source, source_session, d['uid']))
+                dashboard = get_dashboard(args.source, source_session, d_uid)
+                source_dashboards.append(dashboard)
+                d_uid = get_folder_of_dashboard(dashboard)
+                dashboard_folders[d_uid] = get_folder(args.source, source_session, d_uid)
         else:
             source_dashboards = load_from_path(args.source)
+            dashboard_folders = load_from_path(args.source + os.sep + '/folders')
 
         LOGGER.info('Saving dashboards')
-        if args.target.startswith('https'):
+        if args.target.startswith('http'):
+            existing_f_uid = [f['uid'] for f in list_folders(args.target, target_session)]
+            for dashboard_folder_uid in dashboard_folders:
+                if dashboard_folder_uid not in existing_f_uid:
+                    set_folder(args.target, target_session, f)
+                elif args.force_overwrite:
+                    update_folder(args.target, target_session, f)
             for d in source_dashboards:
                 set_dashboard(args.target, target_session, d, args.force_overwrite)
         else:
+            for f in dashboard_folders:
+                save_folder(f, args.target, exist_skip=not args.force_overwrite)
             for d in source_dashboards:
                 save_dashboard(d, args.target, exist_skip=not args.force_overwrite)
 
-    elif 'alerts' in args.items:
+    if 'alerts' in args.items:
         LOGGER.info('Loading alerts')
         source_alerts = list()
+        alert_folders = dict() # indexed by uid
 
         if args.source.startswith("http"):
             uids = ls_alerts(args.source, source_session)
-
             LOGGER.debug(f"List of alert {uids=}")
 
             for uid in uids:
                 alert = get_alert_rule(args.source, source_session, uid)
                 source_alerts.append(alert)
+            for alert in source_alerts:
+                f_uid = get_folder_of_alert(alert)
+                alert_folders[f_uid] = get_folder(args.source, source_session, f_uid)
+
         else:
             source_alerts = load_from_path(args.source)
+            alert_folders = load_from_path(args.source + os.sep + '/folders')
 
         LOGGER.info("Saving alerts")
         if args.target.startswith("http"):
+            existing_f_uid = [f['uid'] for f in list_folders(args.target, target_session)]
+            for alert_folder_uid in alert_folders:
+                if alert_folder_uid not in existing_f_uid:
+                    LOGGER.debug(f'{alert_folder_uid=}')
+                    LOGGER.debug(f'{existing_f_uid=}')
+                    set_folder(args.target, target_session, alert_folders[alert_folder_uid])
+                elif args.force_overwrite:
+                    update_folder(args.target, target_session, alert_folders[alert_folder_uid])
+
             for a in source_alerts:
                 set_alert(args.target, target_session, a)
         else:
+            for f in alert_folders:
+                save_folder(f, args.target, exist_skip=not args.force_overwrite)
             for a in source_alerts:
                 save_alert(a, args.target, exist_skip=not args.force_overwrite)
 
     else:
-        raise NotImplementedError('Not implemented... yet!')
+        raise NotImplementedError('Item not implemented... yet!')
 
 
 if __name__ == '__main__':

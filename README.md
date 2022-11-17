@@ -1,6 +1,11 @@
 # grafana-sync
 Python tool to sync Grafana dashboards
 
+## Known issues
+
+- cannot do both alerts and dashboards at the same time (arg parsing issue)
+- alerts can be imported but do not show in the web gui
+
 ## Running
 
 ### in Docker
@@ -65,10 +70,67 @@ TARGET_GRAFANA_PASSWORD Password for the target Grafana server (when no token is
 USER                    Username to save dashboard changes under (usually, your Unix username)
 ```
 
+### env file
+
+For convenience, you can create a file as such to save variables to, e.g. `.local.env`:
+
+```sh
+export SOURCE_GRAFANA_URL="http://192.168.123.45:6789"
+export SOURCE_GRAFANA_TOKEN=fooPig5ZG0+bU40ejR7U3ZAdE0oXDA
+export SOURCE_GRAFANA_USER=admin
+# if you use minikube for testing you can get the password like so:
+# minikube kubectl -- get secret --namespace logging grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+export SOURCE_GRAFANA_PASSWORD=admin
+
+export TARGET_GRAFANA_URL="https://grafana.example.com"
+export TARGET_GRAFANA_TOKEN=barPU1AdlF5ImE+T204ZjM+Klgqb1M
+export TARGET_GRAFANA_USER=admin
+export TARGET_GRAFANA_PASSWORD=admin
+```
+
+You can then source it before running the tool:
+
+```bash
+source .local.env
+python ./grafana-sync -s "$SOURCE_GRAFANA_URL" -t alerts/ alerts
+```
+
+
 ## Testing
 
+### with Grafana in Docker
+
 spawn a Grafana instance: https://hub.docker.com/r/grafana/grafana/
-```
+
+```sh
 docker run -d --name=grafana -p 3000:3000 grafana/grafana
 ```
 > Try it out, default admin user credentials are admin/admin.
+
+### with Grafana and VictoriaMetrics in Minikube
+
+```sh
+# start the cluster
+minikube start
+# install grafana
+# where
+# - logging is the k8s namespace name
+# - grafana is the service name
+helm repo add grafana https://grafana.github.io/helm-charts
+helm install -n logging grafana grafana/grafana
+# start grafana and open it in browser
+minikube service -n logging grafana-np
+# get the grafana admin password
+minikube kubectl -- get secret --namespace logging grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+# install prometheus
+# where:
+# - monitoring is the k8s namespace name
+# - prometheus is the service name
+# - 9090 is the prometheus server port
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install -n monitoring prometheus prometheus-community/prometheus
+minikube kubectl -- expose service -n monitoring prometheus-server --type=NodePort --target-port=9090 --name=prometheus
+minikube service -n monitoring prometheus
+# to add prometheus to grafana, go to Configuration -> Data Sources -> VictoriaMetrics
+# and add a server with url "http://monitoring.prometheus:9090"
+```
