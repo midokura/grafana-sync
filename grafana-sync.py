@@ -73,7 +73,7 @@ def ls_dashboards(base_url, session):
 def get_dashboard(base_url, session, uid: str):
     """Download dashboard by uid from Grafana server"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#get-dashboard-by-uid
-    return simple_get(f'/dashboards/uid/{uid}')
+    return simple_get(base_url, session, f'/dashboards/uid/{uid}')
 
 
 def set_dashboard(base_url, session, data_json, overwrite=False, adapt_uid=False):
