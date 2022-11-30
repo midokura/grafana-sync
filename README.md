@@ -4,7 +4,6 @@ Python tool to sync Grafana dashboards
 ## Known issues
 
 - cannot do both alerts and dashboards at the same time (arg parsing issue)
-- alerts can be imported but do not show in the web gui
 
 ## Running
 
