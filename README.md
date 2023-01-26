@@ -133,3 +133,9 @@ minikube service -n monitoring prometheus
 # to add prometheus to grafana, go to Configuration -> Data Sources -> VictoriaMetrics
 # and add a server with url "http://monitoring.prometheus:9090"
 ```
+
+### Create api token
+
+```sh 
+curl -X POST -H "Content-Type: application/json" -d '{"name":"apikeycurl", "role": "Admin"}' http://admin:admin@localhost:3000/api/auth/keys
+```
