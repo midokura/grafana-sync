@@ -70,7 +70,7 @@ def ls_dashboards(base_url, session):
 def get_dashboard(base_url, session, uid: str):
     """Download dashboard by uid from Grafana server"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#get-dashboard-by-uid
-    return simple_get(base_url, session, f'/dashboards/uid/{uid}')
+    return simple_get(base_url, session, f'dashboards/uid/{uid}')
 
 def set_dashboard(base_url, session, data_json, overwrite=False, adapt_uid=False):
     """Create new dashboard in Grafana server"""
@@ -464,10 +464,10 @@ def main():
 
         if args.source.startswith('http'):
             for d in ls_dashboards(args.source, source_session.session):
-                dashboard = get_dashboard(args.source, source_session.session, d_uid)
+                dashboard = get_dashboard(args.source, source_session.session, d['uid'])
                 source_dashboards.append(dashboard)
-                d_uid = get_folder_of_dashboard(dashboard)
-                dashboard_folders[d_uid] = get_folder(args.source, source_session.session, d_uid)
+                f_uid = get_folder_of_dashboard(dashboard)
+                dashboard_folders[f_uid] = get_folder(args.source, source_session.session, f_uid)
         else:
             source_dashboards = load_from_path(args.source)
             dashboard_folders = load_from_path(args.source + os.sep + '/folders')
@@ -483,12 +483,12 @@ def main():
             for d in source_dashboards:
                 set_dashboard(args.target, target_session.session, d, args.force_overwrite)
         else:
-            for f in dashboard_folders:
-                save_folder(f, args.target, exist_skip=not args.force_overwrite)
+            for dashboard_folder_uid in dashboard_folders:
+                save_folder(dashboard_folders[dashboard_folder_uid], args.target, exist_skip=not args.force_overwrite)
             for d in source_dashboards:
                 save_dashboard(d, args.target, exist_skip=not args.force_overwrite)
 
-    if 'alerts' in args.items:
+    elif 'alerts' in args.items:
         target.copy_alerts_from(source)
 
     else:
