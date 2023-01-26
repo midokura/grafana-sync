@@ -23,7 +23,7 @@ from pprint import pformat
 import re
 import requests
 import sys
-from typing import List, Optional
+from typing import List, Optional, Callable
 
 from pygments import highlight
 from pygments.formatters import TerminalFormatter
@@ -54,7 +54,6 @@ def sanitize(text: str) -> str:
     underscore character"""
     return re.sub(r'[^a-zA-Z0-9_-]', '_', text)
 
-
 def simple_get(base_url, session, api_path):
     """helper to send a GET request and return the parsed JSON response"""
     request = session.get(base_url + '/api/' + api_path)
@@ -63,18 +62,15 @@ def simple_get(base_url, session, api_path):
     LOGGER.debug('%s:\n%s', api_path, pretty_json(data))
     return data
 
-
 def ls_dashboards(base_url, session):
     """List all Grafana server's dashboards"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#dashboard-search
     return simple_get(base_url, session, 'search?type=dash-db') # type excludes folders
 
-
 def get_dashboard(base_url, session, uid: str):
     """Download dashboard by uid from Grafana server"""
     # https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/#get-dashboard-by-uid
     return simple_get(base_url, session, f'/dashboards/uid/{uid}')
-
 
 def set_dashboard(base_url, session, data_json, overwrite=False, adapt_uid=False):
     """Create new dashboard in Grafana server"""
@@ -112,13 +108,11 @@ def list_folders(base_url, session):
     """
     return simple_get(base_url, session, 'folders')
 
-
 def get_folder(base_url, session, uid):
     """
     https://grafana.com/docs/grafana/v9.1/developers/http_api/folder/#get-folder-by-uid
     """
     return simple_get(base_url, session, f'folders/{uid}')
-
 
 def update_folder(base_url, session, folder: dict):
     """
@@ -133,8 +127,7 @@ def update_folder(base_url, session, folder: dict):
     LOGGER.debug('set_folder:\n%s', pretty_json(data))
     return data
 
-
-def set_folder(base_url, session, folder: dict):
+def create_folder(base_url, session, folder: dict):
     """
     https://grafana.com/docs/grafana/v9.1/developers/http_api/folder/#create-folder
     """
@@ -146,12 +139,6 @@ def set_folder(base_url, session, folder: dict):
     data = request.json()
     LOGGER.debug('set_folder:\n%s', pretty_json(data))
     return data
-
-
-def get_folder_of_alert(alert: dict) -> str:
-    """returns UID of folder that the 'alert' belongs to"""
-    return alert['folderUID']
-
 
 def get_folder_of_dashboard(dashboard: dict) -> str:
     """returns UID of dashboard that the 'alert' belongs to"""
@@ -169,8 +156,7 @@ def is_alert(data_json):
     """basic sanity check of a few required fields"""
     return all(item in data_json for item in {'ruleGroup', 'title'})
 
-
-def set_alert(base_url, session, data_json, overwrite=False, adapt_uid=False) -> Optional[str]:
+def create_alert(base_url, session, data_json, overwrite=False, adapt_uid=False) -> Optional[str]:
     """Create new alert in Grafana server.
     Requires admin access level
     https://grafana.com/docs/grafana/v9.1/developers/http_api/alerting_provisioning/#alert-rule
@@ -194,22 +180,18 @@ def set_alert(base_url, session, data_json, overwrite=False, adapt_uid=False) ->
     new_alert = request.json()
     LOGGER.debug('set_alert:\n%s', pretty_json(new_alert))
     request.raise_for_status()
-    return new_alert     
-    
+    return new_alert
 
 def ls_legacy_alerts(base_url, session) -> dict:
     """Deprecated endpoint"""
     return simple_get(base_url, session, 'alerts')
 
-
 def get_rule_provisioning_templates(base_url, session) -> dict:
     return simple_get(base_url, session, 'v1/provisioning/templates')
-
 
 def get_internal_ruler_rules(base_url, session) -> dict:
     """Query internal endpoint to export all alert rules """
     return simple_get(base_url, session, 'ruler/grafana/api/v1/rules')
-
 
 def ls_alerts(base_url, session) -> set:
     """there is no "official" endpoint to list alert rules.
@@ -226,7 +208,6 @@ def ls_alerts(base_url, session) -> set:
                 uids.add(alert_uid)
     return uids
 
-
 def get_alert_rule(base_url, session, uid: str, check_status=True) -> dict:
     """Query public endpoint to export alert rule. UID is required. 
     Permission level required: admin"""
@@ -240,7 +221,6 @@ def get_alert_rule(base_url, session, uid: str, check_status=True) -> dict:
     LOGGER.debug('get_alert_rule:\n%s', pretty_json(data))
     return data
 
-
 def save_json(json_text: str, filename, path, exist_skip=True):
     """Save JSON file under a common path"""
     os.makedirs(path, exist_ok=True)
@@ -251,19 +231,16 @@ def save_json(json_text: str, filename, path, exist_skip=True):
     with open(file_path, 'w') as f:
         json.dump(json_text, f, indent=2)
 
-
 def save_alert(a: dict, path, exist_skip=True):
     filename_pattern = f'{a["title"]}_{a["uid"]}'
     filename_sanitized = f"{sanitize(filename_pattern)}.json"
     return save_json(a, filename_sanitized, path, exist_skip)
-
 
 def save_dashboard(d: dict, path, exist_skip=True):
     dashboard = d['dashboard']
     filename_pattern = f'{dashboard["title"]}_{dashboard["uid"]}'
     filename_sanitized = f"{sanitize(filename_pattern)}.json"
     return save_json(dashboard, filename_sanitized, path, exist_skip)
-
 
 def load_from_path(path: str) -> List[str]:
     loaded = []
@@ -283,13 +260,11 @@ def load_from_path(path: str) -> List[str]:
     LOGGER.info("Loaded %d alerts from %s", len(loaded), path)
     return loaded
 
-
 def load(file_name: str):
     """Load dashboard JSON from file_name"""
     LOGGER.debug('Opening %s', file_name)
     with open(file_name, 'r') as f:
         return json.load(f)
-
 
 def create_token(base_url: str, session, password, role='Admin', user='admin'):
     """Use http basic auth to create a token for further API usage"""
@@ -326,7 +301,6 @@ def create_token(base_url: str, session, password, role='Admin', user='admin'):
     session.headers = {"Authorization": f"Bearer {key['key']}"}
     session.auth = None # stop using HTTP basic auth
 
-
 def auth_keys(base_url, session):
     # permission level needed for seeing auth keys is admin
     request = session.get(base_url + '/api/auth/keys')
@@ -334,17 +308,85 @@ def auth_keys(base_url, session):
     print(request.json())
 
 class GrafanaLogin:
+
     def __init__(self, token:str, user:str, password: str, base_url: str):
         self.session = requests.Session()
         if token:
             self.session.headers = {"Authorization": f"Bearer {token}"}
         else:
             create_token(base_url, self.session, user=user, password=password)
+
 class GrafanaClient:
 
-    def __int__(self, base_url: str, session: GrafanaLogin):
+    def __init__(self, base_url: str, session: GrafanaLogin, overwrite: bool) -> None:
+        super().__init__()
         self.url = base_url
         self.session = session.session
+        self.folders = self.__load_folders()
+        self.alerts = self.__load_alerts()
+        self.overwrite = overwrite
+
+    def copy_alerts_from(self, source: 'GrafanaClient'):
+        if self.url.startswith("http"):
+            source_alerts_with_target_folders = source.alerts
+            update_folder = lambda s_folder, t_folder: self.__update_alerts_folders(s_folder, t_folder, source_alerts_with_target_folders)
+            self.__sync_folders_with(source, update_folder)
+            self.__save_alert_to_grafana(source_alerts_with_target_folders)
+        else:
+            self.__save_alerts_to_file(source.folders, source.alerts)
+
+    def __sync_folders_with(self, source: 'GrafanaClient', update_children: Callable[[dict, dict], None])-> None:
+        for source_folder in source.folders:
+            current_folder = self.__find_folder(source_folder)
+            if not current_folder:
+                create_folder(self.url, self.session, source_folder)
+            if self.overwrite and current_folder is not None and not current_folder['title'] == source_folder['title']:
+                current_folder['title'] = source_folder['title']
+                update_folder(self.url, self.session, current_folder)
+            if current_folder is not None and not current_folder['uid'] == source_folder['uid']:
+                update_children(source_folder, current_folder)
+
+    def __save_alert_to_grafana(self, alerts: list):
+        LOGGER.info(f"Saving alerts to {self.url}")
+        for a in alerts:
+            create_alert(self.url, self.session, a)
+
+    def __save_alerts_to_file(self, folders: dict, alerts: list):
+        LOGGER.info(f"Saving alerts file {self.url}")
+        for f in folders:
+            save_folder(f, self.url, exist_skip=self.overwrite)
+        for a in alerts:
+            save_alert(a, self.url, exist_skip=self.overwrite)
+
+    def __load_folders(self)-> dict:
+        if self.url.startswith('http'):
+            return list_folders(self.url, self.session)
+        else:
+            return load_from_path(self.url + os.sep + '/folders')
+
+    def __load_alerts(self)-> list:
+        LOGGER.info(f'Loading alerts from {self.url}')
+        source_alerts = list()
+        if self.url.startswith('http'):
+            uids = ls_alerts(self.url, self.session)
+            LOGGER.debug(f"List of alert {uids=}")
+            for uid in uids:
+                alert = get_alert_rule(self.url, self.session, uid)
+                source_alerts.append(alert)
+            return source_alerts
+        else:
+            return load_from_path(self.url)
+
+    def __find_folder(self,source:dict)-> dict:
+        for folder in self.folders:
+            if folder['uid'] == source['uid'] or folder['title'] == source['title']:
+                return folder
+        return None
+
+    def __update_alerts_folders(self, source_folder: dict, target_folder: dict, source_alerts: list):
+        for alert in source_alerts:
+            if alert['folderUID'] == source_folder['uid']:
+                alert['folderUID'] = target_folder['uid']
 
 def main():
     parser = argparse.ArgumentParser(
@@ -375,7 +417,7 @@ def main():
             return 1
 
         source_session = GrafanaLogin(SOURCE_GRAFANA_TOKEN,SOURCE_GRAFANA_USER,SOURCE_GRAFANA_PASSWORD, args.source)
-
+        source = GrafanaClient(args.source, source_session, overwrite=args.force_overwrite is not None)
 
     if args.target and args.target.startswith('http'):
         if all((not TARGET_GRAFANA_TOKEN, not TARGET_GRAFANA_USER, not TARGET_GRAFANA_PASSWORD)):
@@ -384,6 +426,7 @@ def main():
             return 1
 
         target_session = GrafanaLogin(TARGET_GRAFANA_TOKEN, TARGET_GRAFANA_USER, TARGET_GRAFANA_PASSWORD, args.target)
+        target = GrafanaClient(args.target, target_session, overwrite=args.force_overwrite is not None)
 
     if 'dashboards' in args.items:
         LOGGER.info('Loading dashboards')
@@ -405,7 +448,7 @@ def main():
             existing_f_uid = [f['uid'] for f in list_folders(args.target, target_session.session)]
             for dashboard_folder_uid in dashboard_folders:
                 if dashboard_folder_uid not in existing_f_uid:
-                    set_folder(args.target, target_session.session, f)
+                    create_folder(args.target, target_session.session, f)
                 elif args.force_overwrite:
                     update_folder(args.target, target_session.session, f)
             for d in source_dashboards:
@@ -417,43 +460,7 @@ def main():
                 save_dashboard(d, args.target, exist_skip=not args.force_overwrite)
 
     if 'alerts' in args.items:
-        LOGGER.info('Loading alerts')
-        source_alerts = list()
-        alert_folders = dict() # indexed by uid
-
-        if args.source.startswith("http"):
-            uids = ls_alerts(args.source, source_session.session)
-            LOGGER.debug(f"List of alert {uids=}")
-
-            for uid in uids:
-                alert = get_alert_rule(args.source, source_session.session, uid)
-                source_alerts.append(alert)
-            for alert in source_alerts:
-                f_uid = get_folder_of_alert(alert)
-                alert_folders[f_uid] = get_folder(args.source, source_session.session, f_uid)
-
-        else:
-            source_alerts = load_from_path(args.source)
-            alert_folders = load_from_path(args.source + os.sep + '/folders')
-
-        LOGGER.info("Saving alerts")
-        if args.target.startswith("http"):
-            existing_f_uid = [f['uid'] for f in list_folders(args.target,target_session.session)]
-            for alert_folder_uid in alert_folders:
-                if alert_folder_uid not in existing_f_uid:
-                    LOGGER.debug(f'{alert_folder_uid=}')
-                    LOGGER.debug(f'{existing_f_uid=}')
-                    set_folder(args.target, target_session.session, alert_folders[alert_folder_uid])
-                elif args.force_overwrite:
-                    update_folder(args.target, target_session.session, alert_folders[alert_folder_uid])
-
-            for a in source_alerts:
-                set_alert(args.target, target_session.session, a)
-        else:
-            for f in alert_folders:
-                save_folder(f, args.target, exist_skip=not args.force_overwrite)
-            for a in source_alerts:
-                save_alert(a, args.target, exist_skip=not args.force_overwrite)
+        target.copy_alerts_from(source)
 
     else:
         raise NotImplementedError('Item not implemented... yet!')
