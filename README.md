@@ -26,7 +26,7 @@ $ docker build . --tag grafana-sync
  => CACHED [2/5] WORKDIR /app                                                                                         0.0s
  => CACHED [3/5] COPY requirements.txt ./                                                                             0.0s
  => CACHED [4/5] RUN pip install -r requirements.txt                                                                  0.0s
- => CACHED [5/5] COPY grafana-sync.py ./                                                                              0.0s
+ => CACHED [5/5] COPY grafana_sync.py ./                                                                              0.0s
  => exporting to image                                                                                                0.1s
  => => exporting layers                                                                                               0.0s
  => => writing image sha256:370213b80f9bd3e0a12a5084f760a78358c9a4ad9a335722caf9bb48dbff5b08                          0.0s
@@ -39,7 +39,7 @@ $ docker run --rm grafana-sync
 ### Usage
 
 ```
-usage: grafana-sync.py [-h] -s SOURCE -t TARGET [-f] [-q | -v] {dashboards,alerts} [{dashboards,alerts} ...]
+usage: grafana_sync.py [-h] -s SOURCE -t TARGET [-f] [-q | -v] {dashboards,alerts} [{dashboards,alerts} ...]
 
 Copies dashboards and / or alerts between local storage and Grafana server
 

@@ -466,7 +466,8 @@ def main():
         raise NotImplementedError('Item not implemented... yet!')
 
 
-if __name__ == '__main__':
+def config_loggin():
+    global pprint_size
     if sys.stdout.isatty():
         RST = '\u001b[0m'
         RED = '\u001b[31m'
@@ -474,15 +475,18 @@ if __name__ == '__main__':
         YLW = '\u001b[33m'
         MGN = '\u001b[35m'
         CYA = '\u001b[36m'
-        logging.addLevelName(logging.DEBUG,    CYA + 'DEBUG'    + RST)
-        logging.addLevelName(logging.INFO,     GRN + 'INFO'     + RST)
-        logging.addLevelName(logging.WARNING,  YLW + 'WARNING'  + RST)
-        logging.addLevelName(logging.ERROR,    RED + 'ERROR'    + RST)
+        logging.addLevelName(logging.DEBUG, CYA + 'DEBUG' + RST)
+        logging.addLevelName(logging.INFO, GRN + 'INFO' + RST)
+        logging.addLevelName(logging.WARNING, YLW + 'WARNING' + RST)
+        logging.addLevelName(logging.ERROR, RED + 'ERROR' + RST)
         logging.addLevelName(logging.CRITICAL, MGN + 'CRITICAL' + RST)
 
         pprint_size = os.get_terminal_size().columns
-    
     logging.basicConfig(level=logging.DEBUG)
+
+
+if __name__ == '__main__':
+    config_loggin()
     try:
         sys.exit(main())
     except requests.exceptions.HTTPError as error:
