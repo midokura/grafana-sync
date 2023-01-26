@@ -139,3 +139,17 @@ minikube service -n monitoring prometheus
 ```sh 
 curl -X POST -H "Content-Type: application/json" -d '{"name":"apikeycurl", "role": "Admin"}' http://admin:admin@localhost:3000/api/auth/keys
 ```
+
+# update_alert
+
+There is a little utility to update namespaces on alerts.
+
+## usage
+
+Similar to `grafana_sync`. The environments variables used are the `SOURCE_` ones only.
+
+
+```bash
+source .local.env
+python ./update_alert.py -g="http://localhost:3000" -o=sts -d=sts-evaluation
+```
