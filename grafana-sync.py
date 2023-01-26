@@ -476,4 +476,8 @@ if __name__ == '__main__':
         pprint_size = os.get_terminal_size().columns
     
     logging.basicConfig(level=logging.DEBUG)
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except requests.exceptions.HTTPError as error:
+        logging.error(f"REST call has failed. The request is {error.request.url} Status is {error.response.status_code} and error is {error.response.text}", error)
+        sys.exit(1)
