@@ -333,6 +333,18 @@ def auth_keys(base_url, session):
     request.raise_for_status()
     print(request.json())
 
+class GrafanaLogin:
+    def __init__(self, token:str, user:str, password: str, base_url: str):
+        self.session = requests.Session()
+        if token:
+            self.session.headers = {"Authorization": f"Bearer {token}"}
+        else:
+            create_token(base_url, self.session, user=user, password=password)
+class GrafanaClient:
+
+    def __int__(self, base_url: str, session: GrafanaLogin):
+        self.url = base_url
+        self.session = session.session
 
 def main():
     parser = argparse.ArgumentParser(
@@ -357,28 +369,21 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     if args.source and args.source.startswith('http'):
-        source_session = requests.Session()
         if all((not SOURCE_GRAFANA_TOKEN, not SOURCE_GRAFANA_USER, not SOURCE_GRAFANA_PASSWORD)):
             logging.error(
                 'Please either set SOURCE_GRAFANA_USER and SOURCE_GRAFANA_PASSWORD or SOURCE_GRAFANA_TOKEN in your environment')
             return 1
 
-        if SOURCE_GRAFANA_TOKEN:
-            source_session.headers = {"Authorization": f"Bearer {SOURCE_GRAFANA_TOKEN}"}
-        else:
-            create_token(args.source, source_session, user=SOURCE_GRAFANA_USER, password=SOURCE_GRAFANA_PASSWORD)
+        source_session = GrafanaLogin(SOURCE_GRAFANA_TOKEN,SOURCE_GRAFANA_USER,SOURCE_GRAFANA_PASSWORD, args.source)
+
 
     if args.target and args.target.startswith('http'):
-        target_session = requests.Session()
         if all((not TARGET_GRAFANA_TOKEN, not TARGET_GRAFANA_USER, not TARGET_GRAFANA_PASSWORD)):
             logging.error(
                 'Please either set TARGET_GRAFANA_USER and TARGET_GRAFANA_PASSWORD or TARGET_GRAFANA_TOKEN in your environment')
             return 1
 
-        if TARGET_GRAFANA_TOKEN:
-            target_session.headers = {"Authorization": f"Bearer {TARGET_GRAFANA_TOKEN}"}
-        else:
-            create_token(args.target, target_session, user=TARGET_GRAFANA_USER, password=TARGET_GRAFANA_PASSWORD)
+        target_session = GrafanaLogin(TARGET_GRAFANA_TOKEN, TARGET_GRAFANA_USER, TARGET_GRAFANA_PASSWORD, args.target)
 
     if 'dashboards' in args.items:
         LOGGER.info('Loading dashboards')
@@ -386,25 +391,25 @@ def main():
         dashboard_folders = dict() # indexed by uid
 
         if args.source.startswith('http'):
-            for d in ls_dashboards(args.source, source_session):
-                dashboard = get_dashboard(args.source, source_session, d_uid)
+            for d in ls_dashboards(args.source, source_session.session):
+                dashboard = get_dashboard(args.source, source_session.session, d_uid)
                 source_dashboards.append(dashboard)
                 d_uid = get_folder_of_dashboard(dashboard)
-                dashboard_folders[d_uid] = get_folder(args.source, source_session, d_uid)
+                dashboard_folders[d_uid] = get_folder(args.source, source_session.session, d_uid)
         else:
             source_dashboards = load_from_path(args.source)
             dashboard_folders = load_from_path(args.source + os.sep + '/folders')
 
         LOGGER.info('Saving dashboards')
         if args.target.startswith('http'):
-            existing_f_uid = [f['uid'] for f in list_folders(args.target, target_session)]
+            existing_f_uid = [f['uid'] for f in list_folders(args.target, target_session.session)]
             for dashboard_folder_uid in dashboard_folders:
                 if dashboard_folder_uid not in existing_f_uid:
-                    set_folder(args.target, target_session, f)
+                    set_folder(args.target, target_session.session, f)
                 elif args.force_overwrite:
-                    update_folder(args.target, target_session, f)
+                    update_folder(args.target, target_session.session, f)
             for d in source_dashboards:
-                set_dashboard(args.target, target_session, d, args.force_overwrite)
+                set_dashboard(args.target, target_session.session, d, args.force_overwrite)
         else:
             for f in dashboard_folders:
                 save_folder(f, args.target, exist_skip=not args.force_overwrite)
@@ -417,15 +422,15 @@ def main():
         alert_folders = dict() # indexed by uid
 
         if args.source.startswith("http"):
-            uids = ls_alerts(args.source, source_session)
+            uids = ls_alerts(args.source, source_session.session)
             LOGGER.debug(f"List of alert {uids=}")
 
             for uid in uids:
-                alert = get_alert_rule(args.source, source_session, uid)
+                alert = get_alert_rule(args.source, source_session.session, uid)
                 source_alerts.append(alert)
             for alert in source_alerts:
                 f_uid = get_folder_of_alert(alert)
-                alert_folders[f_uid] = get_folder(args.source, source_session, f_uid)
+                alert_folders[f_uid] = get_folder(args.source, source_session.session, f_uid)
 
         else:
             source_alerts = load_from_path(args.source)
@@ -433,17 +438,17 @@ def main():
 
         LOGGER.info("Saving alerts")
         if args.target.startswith("http"):
-            existing_f_uid = [f['uid'] for f in list_folders(args.target, target_session)]
+            existing_f_uid = [f['uid'] for f in list_folders(args.target,target_session.session)]
             for alert_folder_uid in alert_folders:
                 if alert_folder_uid not in existing_f_uid:
                     LOGGER.debug(f'{alert_folder_uid=}')
                     LOGGER.debug(f'{existing_f_uid=}')
-                    set_folder(args.target, target_session, alert_folders[alert_folder_uid])
+                    set_folder(args.target, target_session.session, alert_folders[alert_folder_uid])
                 elif args.force_overwrite:
-                    update_folder(args.target, target_session, alert_folders[alert_folder_uid])
+                    update_folder(args.target, target_session.session, alert_folders[alert_folder_uid])
 
             for a in source_alerts:
-                set_alert(args.target, target_session, a)
+                set_alert(args.target, target_session.session, a)
         else:
             for f in alert_folders:
                 save_folder(f, args.target, exist_skip=not args.force_overwrite)
