@@ -154,7 +154,7 @@ def save_folder(f: dict, path, exist_skip=True):
 
 def is_alert(data_json):
     """basic sanity check of a few required fields"""
-    return all(item in data_json for item in {'ruleGroup', 'title'})
+    return 'uid' in data_json and all(item in data_json for item in {'ruleGroup', 'title'})
 
 def create_alert(base_url, session, data_json, overwrite=False, adapt_uid=False) -> Optional[str]:
     """Create new alert in Grafana server.
@@ -163,20 +163,22 @@ def create_alert(base_url, session, data_json, overwrite=False, adapt_uid=False)
     """
     if not is_alert(data_json):
         raise ValueError("JSON contains no alert rule")
-    if overwrite:
-        raise NotImplementedError('Can not overwrite alerts yet')
-    elif 'uid' in data_json:
-        data = get_alert_rule(base_url, session, data_json['uid'], check_status=False)
-        if is_alert(data):
-            LOGGER.debug('Skipped already existing alert: %s "%s"',
-                data_json['uid'], data_json['title'])
-            return
-    if 'annotations' in data_json:
+    data = get_alert_rule(base_url, session, data_json['uid'], check_status=False)
+    if not overwrite and is_alert(data):
+        LOGGER.debug('Skipped already existing alert: %s "%s"',
+                     data_json['uid'], data_json['title'])
+        return
+    if not overwrite and 'annotations' in data_json:
         # annotations may reference UIDs of not existing dashboards...
         # TODO: adapt dashboard uids, or only allow setting the alert with its dashboard maybe
         del data_json['annotations']
     # TODO: adapt datasource uids
-    request = session.post(base_url + '/api/v1/provisioning/alert-rules', json=data_json)
+    create_url = base_url + '/api/v1/provisioning/alert-rules'
+    if is_alert(data):
+        update_url = create_url + f"/{data['uid']}"
+        request = session.put(update_url, json=data_json)
+    else:
+        request = session.post(create_url, json=data_json)
     new_alert = request.json()
     LOGGER.debug('set_alert:\n%s', pretty_json(new_alert))
     request.raise_for_status()
@@ -335,28 +337,36 @@ class GrafanaClient:
         else:
             self.__save_alerts_to_file(source.folders, source.alerts)
 
-    def __sync_folders_with(self, source: 'GrafanaClient', update_children: Callable[[dict, dict], None])-> None:
+    def save_alert(self, alert: dict, overwrite: bool = None) -> None:
+        if not overwrite:
+            overwrite = self.overwrite
+        if self.url.startswith('http'):
+            create_alert(self.url, self.session, alert, overwrite=overwrite)
+        else:
+            save_alert(alert, self.url, exist_skip=self.overwrite)
+
+    def __sync_folders_with(self, source: 'GrafanaClient', update_childs: Callable[[dict, dict], None])-> None:
         for source_folder in source.folders:
             current_folder = self.__find_folder(source_folder)
             if not current_folder:
                 create_folder(self.url, self.session, source_folder)
-            if self.overwrite and current_folder is not None and not current_folder['title'] == source_folder['title']:
+            elif self.overwrite and current_folder is not None and not current_folder['title'] == source_folder['title']:
                 current_folder['title'] = source_folder['title']
                 update_folder(self.url, self.session, current_folder)
-            if current_folder is not None and not current_folder['uid'] == source_folder['uid']:
-                update_children(source_folder, current_folder)
+            elif not current_folder['uid'] == source_folder['uid']:
+                update_childs(source_folder, current_folder)
 
-    def __save_alert_to_grafana(self, alerts: list):
+    def __save_alert_to_grafana(self, alerts:list):
         LOGGER.info(f"Saving alerts to {self.url}")
         for a in alerts:
-            create_alert(self.url, self.session, a)
+           self.save_alert(a)
 
     def __save_alerts_to_file(self, folders: dict, alerts: list):
         LOGGER.info(f"Saving alerts file {self.url}")
         for f in folders:
             save_folder(f, self.url, exist_skip=self.overwrite)
         for a in alerts:
-            save_alert(a, self.url, exist_skip=self.overwrite)
+            self.save_alert(a)
 
     def __load_folders(self)-> dict:
         if self.url.startswith('http'):
@@ -388,6 +398,29 @@ class GrafanaClient:
             if alert['folderUID'] == source_folder['uid']:
                 alert['folderUID'] = target_folder['uid']
 
+def config_logging(args: argparse.Namespace) -> None:
+    global pprint_size
+    if sys.stdout.isatty():
+        RST = '\u001b[0m'
+        RED = '\u001b[31m'
+        GRN = '\u001b[32m'
+        YLW = '\u001b[33m'
+        MGN = '\u001b[35m'
+        CYA = '\u001b[36m'
+        logging.addLevelName(logging.DEBUG, CYA + 'DEBUG' + RST)
+        logging.addLevelName(logging.INFO, GRN + 'INFO' + RST)
+        logging.addLevelName(logging.WARNING, YLW + 'WARNING' + RST)
+        logging.addLevelName(logging.ERROR, RED + 'ERROR' + RST)
+        logging.addLevelName(logging.CRITICAL, MGN + 'CRITICAL' + RST)
+
+        pprint_size = os.get_terminal_size().columns
+    logging.basicConfig(level=logging.DEBUG)
+    logging.getLogger().setLevel(logging.INFO)
+    if args.quiet:
+        logging.getLogger().setLevel(logging.WARNING)
+    elif args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
 def main():
     parser = argparse.ArgumentParser(
         description='Copies dashboards and / or alerts between local storage and Grafana server',
@@ -398,17 +431,13 @@ def main():
     parser.add_argument('-t', '--target', required=True, help="Copy target: Grafana server HTTPS URL, or path to local folder")
     parser.add_argument('-f', '--force-overwrite', action='store_true')
     parser.add_argument('items', help='What items should be copied from source to destination?',
-        nargs='+', choices=['dashboards', 'alerts'])
+                        nargs='+', choices=['dashboards', 'alerts'])
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument('-q', '--quiet', action='store_true')
     verbosity.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
 
-    logging.getLogger().setLevel(logging.INFO)
-    if args.quiet:
-        logging.getLogger().setLevel(logging.WARNING)
-    elif args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+    config_logging(args)
 
     if args.source and args.source.startswith('http'):
         if all((not SOURCE_GRAFANA_TOKEN, not SOURCE_GRAFANA_USER, not SOURCE_GRAFANA_PASSWORD)):
@@ -417,7 +446,7 @@ def main():
             return 1
 
         source_session = GrafanaLogin(SOURCE_GRAFANA_TOKEN,SOURCE_GRAFANA_USER,SOURCE_GRAFANA_PASSWORD, args.source)
-        source = GrafanaClient(args.source, source_session, overwrite=args.force_overwrite is not None)
+        source = GrafanaClient(args.source, source_session, overwrite=args.force_overwrite)
 
     if args.target and args.target.startswith('http'):
         if all((not TARGET_GRAFANA_TOKEN, not TARGET_GRAFANA_USER, not TARGET_GRAFANA_PASSWORD)):
@@ -426,7 +455,7 @@ def main():
             return 1
 
         target_session = GrafanaLogin(TARGET_GRAFANA_TOKEN, TARGET_GRAFANA_USER, TARGET_GRAFANA_PASSWORD, args.target)
-        target = GrafanaClient(args.target, target_session, overwrite=args.force_overwrite is not None)
+        target = GrafanaClient(args.target, target_session, overwrite=args.force_overwrite)
 
     if 'dashboards' in args.items:
         LOGGER.info('Loading dashboards')
@@ -467,22 +496,6 @@ def main():
 
 
 if __name__ == '__main__':
-    if sys.stdout.isatty():
-        RST = '\u001b[0m'
-        RED = '\u001b[31m'
-        GRN = '\u001b[32m'
-        YLW = '\u001b[33m'
-        MGN = '\u001b[35m'
-        CYA = '\u001b[36m'
-        logging.addLevelName(logging.DEBUG,    CYA + 'DEBUG'    + RST)
-        logging.addLevelName(logging.INFO,     GRN + 'INFO'     + RST)
-        logging.addLevelName(logging.WARNING,  YLW + 'WARNING'  + RST)
-        logging.addLevelName(logging.ERROR,    RED + 'ERROR'    + RST)
-        logging.addLevelName(logging.CRITICAL, MGN + 'CRITICAL' + RST)
-
-        pprint_size = os.get_terminal_size().columns
-    
-    logging.basicConfig(level=logging.DEBUG)
     try:
         sys.exit(main())
     except requests.exceptions.HTTPError as error:
