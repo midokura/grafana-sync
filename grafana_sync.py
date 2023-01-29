@@ -79,7 +79,12 @@ def set_dashboard(base_url, session, data_json, overwrite=False, adapt_uid=False
         raise ValueError("JSON contains no dashboard")
 
     dashboard_json = data_json
+    # Ensure it is a creation
+    if not overwrite:
+        data_json['dashboard'].pop('id',None)
     if 'meta' in dashboard_json:
+        if 'folderUid' in data_json['meta']:
+            data_json['folderUid'] = data_json['meta']['folderUid']
         # 'meta' is info specific to permissions that can not be set via this API
         del dashboard_json['meta']
     message = f'Dashboard upload with {sys.argv[0]}'
@@ -156,7 +161,7 @@ def is_alert(data_json):
     """basic sanity check of a few required fields"""
     return 'uid' in data_json and all(item in data_json for item in {'ruleGroup', 'title'})
 
-def create_alert(base_url, session, data_json, overwrite=False, adapt_uid=False) -> Optional[str]:
+def set_alert(base_url, session, data_json, overwrite=False, adapt_uid=False) -> Optional[str]:
     """Create new alert in Grafana server.
     Requires admin access level
     https://grafana.com/docs/grafana/v9.1/developers/http_api/alerting_provisioning/#alert-rule
@@ -233,12 +238,12 @@ def save_json(json_text: str, filename, path, exist_skip=True):
     with open(file_path, 'w') as f:
         json.dump(json_text, f, indent=2)
 
-def save_alert(a: dict, path, exist_skip=True):
+def save_alert_in_file(a: dict, path, exist_skip=True):
     filename_pattern = f'{a["title"]}_{a["uid"]}'
     filename_sanitized = f"{sanitize(filename_pattern)}.json"
     return save_json(a, filename_sanitized, path, exist_skip)
 
-def save_dashboard(d: dict, path, exist_skip=True):
+def save_dashboard_in_file(d: dict, path, exist_skip=True):
     dashboard = d['dashboard']
     filename_pattern = f'{dashboard["title"]}_{dashboard["uid"]}'
     filename_sanitized = f"{sanitize(filename_pattern)}.json"
@@ -325,15 +330,24 @@ class GrafanaClient:
         self.url = base_url
         self.session = session.session
         self.folders = self.__load_folders()
+        self.dashboards = self.__load_dashboard()
         self.alerts = self.__load_alerts()
         self.overwrite = overwrite
 
+    def copy_dashboard_from(self, source: 'GrafanaClient'):
+        if self.url.startswith("http"):
+            dashboards = source.dashboards.copy()
+            update_folder = lambda s_folder, t_folder: self.__update_dashboard_folders(s_folder, t_folder,dashboards)
+            self.__sync_folders_with(source, update_folder)
+            self.__save_dashboards_to_grafana(dashboards)
+        else:
+            self.__save_dashboards_to_file(source.folders, source.alerts)
     def copy_alerts_from(self, source: 'GrafanaClient'):
         if self.url.startswith("http"):
-            source_alerts_with_target_folders = source.alerts
-            update_folder = lambda s_folder, t_folder: self.__update_alerts_folders(s_folder, t_folder, source_alerts_with_target_folders)
+            alerts = source.alerts.copy()
+            update_folder = lambda s_folder, t_folder: self.__update_alerts_folders(s_folder, t_folder, alerts)
             self.__sync_folders_with(source, update_folder)
-            self.__save_alert_to_grafana(source_alerts_with_target_folders)
+            self.__save_alert_to_grafana(alerts)
         else:
             self.__save_alerts_to_file(source.folders, source.alerts)
 
@@ -341,9 +355,17 @@ class GrafanaClient:
         if not overwrite:
             overwrite = self.overwrite
         if self.url.startswith('http'):
-            create_alert(self.url, self.session, alert, overwrite=overwrite)
+            set_alert(self.url, self.session, alert, overwrite=overwrite)
         else:
-            save_alert(alert, self.url, exist_skip=self.overwrite)
+            save_alert_in_file(alert, self.url, exist_skip=self.overwrite)
+
+    def save_dashboard(self, dashboard: dict, overwrite: bool = None) -> None:
+        if not overwrite:
+            overwrite = self.overwrite
+        if self.url.startswith('http'):
+            set_dashboard(self.url, self.session, dashboard, overwrite=overwrite)
+        else:
+            save_dashboard_in_file(dashboard, self.url, exist_skip=self.overwrite)
 
     def __sync_folders_with(self, source: 'GrafanaClient', update_childs: Callable[[dict, dict], None])-> None:
         for source_folder in source.folders:
@@ -356,6 +378,17 @@ class GrafanaClient:
             elif not current_folder['uid'] == source_folder['uid']:
                 update_childs(source_folder, current_folder)
 
+    def __save_dashboards_to_grafana(self, dashboards:list):
+        LOGGER.info(f"Saving dashboards to {self.url}")
+        for a in dashboards:
+           self.save_dashboard(a)
+    
+    def __save_dashboards_to_file(self, folders: dict, dashboards: list):
+        LOGGER.info(f"Saving dashboards file {self.url}")
+        for f in folders:
+            save_folder(f, self.url, exist_skip=self.overwrite)
+        for a in dashboards:
+            self.save_dashboard(a)
     def __save_alert_to_grafana(self, alerts:list):
         LOGGER.info(f"Saving alerts to {self.url}")
         for a in alerts:
@@ -374,10 +407,21 @@ class GrafanaClient:
         else:
             return load_from_path(self.url + os.sep + '/folders')
 
-    def __load_alerts(self)-> list:
-        LOGGER.info(f'Loading alerts from {self.url}')
-        source_alerts = list()
+    def __load_dashboard(self) -> list:
+        LOGGER.info(f'Loading dashboards from {self.url}')
         if self.url.startswith('http'):
+            source_dashboards = list()
+            for d in ls_dashboards(self.url, self.session):
+                dashboard = get_dashboard(self.url, self.session, d['uid'])
+                source_dashboards.append(dashboard)
+            return source_dashboards
+        else:
+            return load_from_path(self.url)
+
+    def __load_alerts(self) -> list:
+        LOGGER.info(f'Loading alerts from {self.url}')
+        if self.url.startswith('http'):
+            source_alerts = list()
             uids = ls_alerts(self.url, self.session)
             LOGGER.debug(f"List of alert {uids=}")
             for uid in uids:
@@ -397,6 +441,16 @@ class GrafanaClient:
         for alert in source_alerts:
             if alert['folderUID'] == source_folder['uid']:
                 alert['folderUID'] = target_folder['uid']
+
+    def __update_dashboard_folders(self, source_folder: dict, target_folder: dict, source: list):
+        sf_uid = source_folder['uid']
+        tf_uid = target_folder['uid']
+        for dashboard in source:
+            meta = dashboard["meta"]
+            if meta['folderUID'] == sf_uid:
+                meta['folderUID'] = tf_uid
+                meta['folderUrl'] = meta['folderUrl'].replace(sf_uid,tf_uid)
+
 
 def config_logging(args: argparse.Namespace) -> None:
     global pprint_size
@@ -458,35 +512,7 @@ def main():
         target = GrafanaClient(args.target, target_session, overwrite=args.force_overwrite)
 
     if 'dashboards' in args.items:
-        LOGGER.info('Loading dashboards')
-        source_dashboards = list()
-        dashboard_folders = dict() # indexed by uid
-
-        if args.source.startswith('http'):
-            for d in ls_dashboards(args.source, source_session.session):
-                dashboard = get_dashboard(args.source, source_session.session, d['uid'])
-                source_dashboards.append(dashboard)
-                f_uid = get_folder_of_dashboard(dashboard)
-                dashboard_folders[f_uid] = get_folder(args.source, source_session.session, f_uid)
-        else:
-            source_dashboards = load_from_path(args.source)
-            dashboard_folders = load_from_path(args.source + os.sep + '/folders')
-
-        LOGGER.info('Saving dashboards')
-        if args.target.startswith('http'):
-            existing_f_uid = [f['uid'] for f in list_folders(args.target, target_session.session)]
-            for dashboard_folder_uid in dashboard_folders:
-                if dashboard_folder_uid not in existing_f_uid:
-                    create_folder(args.target, target_session.session, f)
-                elif args.force_overwrite:
-                    update_folder(args.target, target_session.session, f)
-            for d in source_dashboards:
-                set_dashboard(args.target, target_session.session, d, args.force_overwrite)
-        else:
-            for dashboard_folder_uid in dashboard_folders:
-                save_folder(dashboard_folders[dashboard_folder_uid], args.target, exist_skip=not args.force_overwrite)
-            for d in source_dashboards:
-                save_dashboard(d, args.target, exist_skip=not args.force_overwrite)
+        target.copy_dashboard_from(source)
 
     elif 'alerts' in args.items:
         target.copy_alerts_from(source)
